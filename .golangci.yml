@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  # use the standard set of linters (govet, errcheck, staticcheck, etc.)
+  default: standard
+  enable:
+    - gocritic  # catches common style mistakes and performance issues
+    - gosec     # detects security vulnerabilities (SQL injection, hardcoded creds, etc.)
+    - unparam   # finds unused function parameters
+    - bodyclose # checks that HTTP response bodies are closed
+    - errname   # enforces naming: error types end with Error, vars start with Err
+
+  settings:
+    gosec:
+      excludes:
+        - G104 # duplicate of errcheck (already in standard set)
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5

@@ -3,3 +3,6 @@
 
 run: ## Run the server locally
 	go run cmd/server/main.go
+
+lint: ## Run linter
+	golangci-lint run ./...
