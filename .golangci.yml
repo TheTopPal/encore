@@ -15,6 +15,17 @@ linters:
       excludes:
         - G104 # duplicate of errcheck (already in standard set)
 
+formatters:
+  enable:
+    - gofumpt # stricter gofmt (enforces extra formatting rules)
+    - gci     # sorts and groups imports (std, external, local)
+  settings:
+    gci:
+      sections:
+        - standard                            # stdlib
+        - default                             # external packages
+        - prefix(github.com/thetoppal/encore) # local project imports
+
 issues:
   max-issues-per-linter: 50
   max-same-issues: 5
