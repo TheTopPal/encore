@@ -1,6 +1,9 @@
 # Encore - Makefile
 # Usage: make <target>
 
+-include .env
+export
+
 ## App
 
 run: ## Run the server locally
@@ -18,8 +21,8 @@ check: format lint ## Format and lint in one command
 
 ## Docker
 
-up: ## Start PostgreSQL and app in Docker
-	docker compose up -d
+up: ## Start PostgreSQL and app in Docker (rebuilds image)
+	docker compose up -d --build
 
 down: ## Stop all containers
 	docker compose down
