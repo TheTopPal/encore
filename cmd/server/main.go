@@ -12,6 +12,9 @@ import (
 
 	"github.com/thetoppal/encore/internal/config"
 	"github.com/thetoppal/encore/internal/db"
+	"github.com/thetoppal/encore/internal/handler"
+	"github.com/thetoppal/encore/internal/repository"
+	"github.com/thetoppal/encore/internal/service"
 )
 
 func main() {
@@ -31,12 +34,19 @@ func main() {
 
 	log.Printf("connected to database")
 
+	// Build dependency chain: repository -> service -> handler.
+	eventRepo := repository.NewEventRepository(pool)
+	eventService := service.NewEventService(eventRepo)
+	eventHandler := handler.NewEventHandler(eventService)
+
 	// Setup router.
 	router := chi.NewRouter()
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Ok")) //nolint:errcheck // nothing to do if response write fails
 	})
+
+	eventHandler.Routes(router)
 
 	// Start server with graceful shutdown.
 	server := http.Server{
