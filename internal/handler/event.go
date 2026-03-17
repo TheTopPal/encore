@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/thetoppal/encore/internal/model"
 	"github.com/thetoppal/encore/internal/repository"
 	"github.com/thetoppal/encore/internal/service"
 )
@@ -28,6 +29,9 @@ func NewEventHandler(svc *service.EventService) *EventHandler {
 func (h *EventHandler) Routes(r chi.Router) {
 	r.Get("/events", h.List)
 	r.Get("/events/{id}", h.GetByID)
+	r.Post("/events", h.Create)
+	r.Put("/events/{id}", h.Update)
+	r.Delete("/events/{id}", h.Delete)
 }
 
 // GetByID handles GET /events/{id}.
@@ -65,6 +69,115 @@ func (h *EventHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, events)
+}
+
+// createEventRequest is the JSON body for POST /events.
+type createEventRequest struct {
+	Title          string    `json:"title"`
+	Description    *string   `json:"description,omitempty"`
+	CategoryID     uuid.UUID `json:"category_id"`
+	OrganizerID    uuid.UUID `json:"organizer_id"`
+	ImageURL       *string   `json:"image_url,omitempty"`
+	AgeRestriction *int16    `json:"age_restriction,omitempty"`
+}
+
+// updateEventRequest is the JSON body for PUT /events/{id}.
+type updateEventRequest struct {
+	Title          string            `json:"title"`
+	Description    *string           `json:"description,omitempty"`
+	CategoryID     uuid.UUID         `json:"category_id"`
+	OrganizerID    uuid.UUID         `json:"organizer_id"`
+	ImageURL       *string           `json:"image_url,omitempty"`
+	AgeRestriction *int16            `json:"age_restriction,omitempty"`
+	Status         model.EventStatus `json:"status"`
+}
+
+// Create handles POST /events.
+func (h *EventHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req createEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{"invalid request body"})
+		return
+	}
+
+	event, err := h.service.Create(r.Context(), service.CreateEventInput{
+		Title:          req.Title,
+		Description:    req.Description,
+		CategoryID:     req.CategoryID,
+		OrganizerID:    req.OrganizerID,
+		ImageURL:       req.ImageURL,
+		AgeRestriction: req.AgeRestriction,
+	})
+	if errors.Is(err, service.ErrValidation) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{err.Error()})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{"internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, event)
+}
+
+// Update handles PUT /events/{id}.
+func (h *EventHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{"invalid event id"})
+		return
+	}
+
+	var req updateEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{"invalid request body"})
+		return
+	}
+
+	event, err := h.service.Update(r.Context(), id, service.UpdateEventInput{
+		Title:          req.Title,
+		Description:    req.Description,
+		CategoryID:     req.CategoryID,
+		OrganizerID:    req.OrganizerID,
+		ImageURL:       req.ImageURL,
+		AgeRestriction: req.AgeRestriction,
+		Status:         req.Status,
+	})
+	if errors.Is(err, service.ErrValidation) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{err.Error()})
+		return
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, errorResponse{"event not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{"internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, event)
+}
+
+// Delete handles DELETE /events/{id}.
+func (h *EventHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{"invalid event id"})
+		return
+	}
+
+	err = h.service.Delete(r.Context(), id)
+	if errors.Is(err, repository.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, errorResponse{"event not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{"internal error"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // errorResponse is a standard error payload.
