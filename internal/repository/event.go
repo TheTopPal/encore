@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,12 @@ type CreateEventParams struct {
 	AgeRestriction *int16
 }
 
+// EventFilter holds optional filter criteria for listing events.
+type EventFilter struct {
+	Status     *model.EventStatus
+	CategoryID *uuid.UUID
+}
+
 // UpdateEventParams holds parameters for updating an existing event.
 type UpdateEventParams struct {
 	Title          string
@@ -40,7 +47,7 @@ type UpdateEventParams struct {
 // EventRepository defines the contract for event data access.
 type EventRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (model.Event, error)
-	List(ctx context.Context, limit, offset int) ([]model.Event, error)
+	List(ctx context.Context, filter EventFilter, limit, offset int) ([]model.Event, int, error)
 	Create(ctx context.Context, params CreateEventParams) (model.Event, error)
 	Update(ctx context.Context, id uuid.UUID, params UpdateEventParams) (model.Event, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -81,18 +88,36 @@ func (r *eventRepo) GetByID(ctx context.Context, id uuid.UUID) (model.Event, err
 	return e, nil
 }
 
-// List returns a paginated list of events ordered by creation date (newest first).
-func (r *eventRepo) List(ctx context.Context, limit, offset int) ([]model.Event, error) {
-	query := `
+// List returns a filtered, paginated list of events ordered by creation date
+// (newest first) together with the total number of matching events.
+func (r *eventRepo) List(ctx context.Context, filter EventFilter, limit, offset int) ([]model.Event, int, error) {
+	where, args := buildEventFilter(filter)
+	argIdx := len(args) + 1
+
+	// Total count of matching events (ignoring LIMIT/OFFSET).
+	countQuery := "SELECT COUNT(*) FROM events " + where
+
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count events: %w", err)
+	}
+
+	// Data page.
+	dataQuery := fmt.Sprintf(`
 		SELECT id, title, description, category_id, organizer_id,
 		       image_url, age_restriction, status, created_at, updated_at
 		FROM events
+		%s
 		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`
+		LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 
-	rows, err := r.pool.Query(ctx, query, limit, offset)
+	dataArgs := make([]any, 0, len(args)+2)
+	dataArgs = append(dataArgs, args...)
+	dataArgs = append(dataArgs, limit, offset)
+
+	rows, err := r.pool.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list events: %w", err)
+		return nil, 0, fmt.Errorf("list events: %w", err)
 	}
 	defer rows.Close()
 
@@ -105,17 +130,41 @@ func (r *eventRepo) List(ctx context.Context, limit, offset int) ([]model.Event,
 			&e.ID, &e.Title, &e.Description, &e.CategoryID, &e.OrganizerID,
 			&e.ImageURL, &e.AgeRestriction, &e.Status, &e.CreatedAt, &e.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan event row: %w", err)
+			return nil, 0, fmt.Errorf("scan event row: %w", err)
 		}
 
 		events = append(events, e)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate event rows: %w", err)
+		return nil, 0, fmt.Errorf("iterate event rows: %w", err)
 	}
 
-	return events, nil
+	return events, total, nil
+}
+
+// buildEventFilter constructs a WHERE clause and parameter list from the filter.
+func buildEventFilter(filter EventFilter) (string, []any) {
+	var conditions []string
+	var args []any
+	argIdx := 1
+
+	if filter.Status != nil {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, *filter.Status)
+		argIdx++
+	}
+
+	if filter.CategoryID != nil {
+		conditions = append(conditions, fmt.Sprintf("category_id = $%d", argIdx))
+		args = append(args, *filter.CategoryID)
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+
+	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
 // Create inserts a new event and returns it with server-generated fields.

@@ -57,18 +57,48 @@ func (h *EventHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, event)
 }
 
-// List handles GET /events?limit=20&offset=0.
+// eventListResponse wraps a page of events with the total matching count.
+type eventListResponse struct {
+	Items []model.Event `json:"items"`
+	Total int           `json:"total"`
+}
+
+// List handles GET /events?limit=20&offset=0&status=published&category_id=...
 func (h *EventHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 20)
 	offset := queryInt(r, "offset", 0)
 
-	events, err := h.service.List(r.Context(), limit, offset)
+	var filter service.EventListFilter
+
+	if s := r.URL.Query().Get("status"); s != "" {
+		status := model.EventStatus(s)
+		filter.Status = &status
+	}
+
+	if s := r.URL.Query().Get("category_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{"invalid category_id"})
+			return
+		}
+		filter.CategoryID = &id
+	}
+
+	events, total, err := h.service.List(r.Context(), filter, limit, offset)
+	if errors.Is(err, service.ErrValidation) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{err.Error()})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{"internal error"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, events)
+	if events == nil {
+		events = []model.Event{}
+	}
+
+	writeJSON(w, http.StatusOK, eventListResponse{Items: events, Total: total})
 }
 
 // createEventRequest is the JSON body for POST /events.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +21,7 @@ import (
 // from handler tests. Only the methods needed for each test are set.
 type mockEventRepo struct {
 	getByIDFn func(ctx context.Context, id uuid.UUID) (model.Event, error)
-	listFn    func(ctx context.Context, limit, offset int) ([]model.Event, error)
+	listFn    func(ctx context.Context, filter repository.EventFilter, limit, offset int) ([]model.Event, int, error)
 	createFn  func(ctx context.Context, params repository.CreateEventParams) (model.Event, error)
 	updateFn  func(ctx context.Context, id uuid.UUID, params repository.UpdateEventParams) (model.Event, error)
 	deleteFn  func(ctx context.Context, id uuid.UUID) error
@@ -30,8 +31,8 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id uuid.UUID) (model.Event,
 	return m.getByIDFn(ctx, id)
 }
 
-func (m *mockEventRepo) List(ctx context.Context, limit, offset int) ([]model.Event, error) {
-	return m.listFn(ctx, limit, offset)
+func (m *mockEventRepo) List(ctx context.Context, filter repository.EventFilter, limit, offset int) ([]model.Event, int, error) {
+	return m.listFn(ctx, filter, limit, offset)
 }
 
 func (m *mockEventRepo) Create(ctx context.Context, params repository.CreateEventParams) (model.Event, error) {
@@ -123,28 +124,107 @@ func TestEventHandler_GetByID(t *testing.T) {
 }
 
 func TestEventHandler_List(t *testing.T) {
-	repo := &mockEventRepo{
-		listFn: func(_ context.Context, _, _ int) ([]model.Event, error) {
-			return []model.Event{{Title: "A"}, {Title: "B"}}, nil
+	catID := uuid.New()
+
+	tests := []struct {
+		name       string
+		url        string
+		repoFn     func(context.Context, repository.EventFilter, int, int) ([]model.Event, int, error)
+		wantStatus int
+		wantTotal  int
+		wantItems  int
+	}{
+		{
+			name: "no filters",
+			url:  "/events?limit=10&offset=0",
+			repoFn: func(_ context.Context, _ repository.EventFilter, _, _ int) ([]model.Event, int, error) {
+				return []model.Event{{Title: "A"}, {Title: "B"}}, 2, nil
+			},
+			wantStatus: http.StatusOK,
+			wantTotal:  2,
+			wantItems:  2,
+		},
+		{
+			name: "filter by status",
+			url:  "/events?status=published",
+			repoFn: func(_ context.Context, f repository.EventFilter, _, _ int) ([]model.Event, int, error) {
+				if f.Status == nil || *f.Status != model.EventStatusPublished {
+					return nil, 0, fmt.Errorf("expected status filter published, got %v", f.Status)
+				}
+				return []model.Event{{Title: "A"}}, 1, nil
+			},
+			wantStatus: http.StatusOK,
+			wantTotal:  1,
+			wantItems:  1,
+		},
+		{
+			name: "filter by category_id",
+			url:  "/events?category_id=" + catID.String(),
+			repoFn: func(_ context.Context, f repository.EventFilter, _, _ int) ([]model.Event, int, error) {
+				if f.CategoryID == nil || *f.CategoryID != catID {
+					return nil, 0, fmt.Errorf("expected category_id %v, got %v", catID, f.CategoryID)
+				}
+				return []model.Event{{Title: "B"}}, 1, nil
+			},
+			wantStatus: http.StatusOK,
+			wantTotal:  1,
+			wantItems:  1,
+		},
+		{
+			name:       "invalid category_id",
+			url:        "/events?category_id=not-a-uuid",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid status filter",
+			url:        "/events?status=bogus",
+			repoFn:     nil, // service validates before calling repo
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "empty result returns empty array",
+			url:  "/events",
+			repoFn: func(_ context.Context, _ repository.EventFilter, _, _ int) ([]model.Event, int, error) {
+				return nil, 0, nil
+			},
+			wantStatus: http.StatusOK,
+			wantTotal:  0,
+			wantItems:  0,
 		},
 	}
-	h := newTestHandler(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/events?limit=10&offset=0", nil)
-	rr := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockEventRepo{listFn: tt.repoFn}
+			h := newTestHandler(repo)
 
-	h.List(rr, req)
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			rr := httptest.NewRecorder()
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("got status %d, want %d", rr.Code, http.StatusOK)
-	}
+			h.List(rr, req)
 
-	var events []model.Event
-	if err := json.NewDecoder(rr.Body).Decode(&events); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(events) != 2 {
-		t.Errorf("got %d events, want 2", len(events))
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("got status %d, want %d; body: %s", rr.Code, tt.wantStatus, rr.Body.String())
+			}
+
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			var resp struct {
+				Items []model.Event `json:"items"`
+				Total int           `json:"total"`
+			}
+			if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(resp.Items) != tt.wantItems {
+				t.Errorf("got %d items, want %d", len(resp.Items), tt.wantItems)
+			}
+			if resp.Total != tt.wantTotal {
+				t.Errorf("got total %d, want %d", resp.Total, tt.wantTotal)
+			}
+		})
 	}
 }
 

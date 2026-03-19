@@ -25,6 +25,12 @@ type CreateEventInput struct {
 	AgeRestriction *int16
 }
 
+// EventListFilter holds optional filter criteria for listing events.
+type EventListFilter struct {
+	Status     *model.EventStatus
+	CategoryID *uuid.UUID
+}
+
 // UpdateEventInput holds the data needed to update an event.
 type UpdateEventInput struct {
 	Title          string
@@ -56,8 +62,12 @@ func (s *EventService) GetByID(ctx context.Context, id uuid.UUID) (model.Event, 
 	return event, nil
 }
 
-// List returns a paginated list of events.
-func (s *EventService) List(ctx context.Context, limit, offset int) ([]model.Event, error) {
+// List returns a filtered, paginated list of events with total count.
+func (s *EventService) List(ctx context.Context, filter EventListFilter, limit, offset int) ([]model.Event, int, error) {
+	if filter.Status != nil && !validEventStatus(*filter.Status) {
+		return nil, 0, fmt.Errorf("%w: invalid status filter %q", ErrValidation, *filter.Status)
+	}
+
 	if limit <= 0 {
 		limit = 20
 	}
@@ -68,12 +78,17 @@ func (s *EventService) List(ctx context.Context, limit, offset int) ([]model.Eve
 		offset = 0
 	}
 
-	events, err := s.repo.List(ctx, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("service list events: %w", err)
+	repoFilter := repository.EventFilter{
+		Status:     filter.Status,
+		CategoryID: filter.CategoryID,
 	}
 
-	return events, nil
+	events, total, err := s.repo.List(ctx, repoFilter, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("service list events: %w", err)
+	}
+
+	return events, total, nil
 }
 
 // Create validates input and creates a new event.

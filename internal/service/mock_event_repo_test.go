@@ -14,7 +14,7 @@ import (
 // can configure only the behavior they care about.
 type mockEventRepo struct {
 	getByIDFn func(ctx context.Context, id uuid.UUID) (model.Event, error)
-	listFn    func(ctx context.Context, limit, offset int) ([]model.Event, error)
+	listFn    func(ctx context.Context, filter repository.EventFilter, limit, offset int) ([]model.Event, int, error)
 	createFn  func(ctx context.Context, params repository.CreateEventParams) (model.Event, error)
 	updateFn  func(ctx context.Context, id uuid.UUID, params repository.UpdateEventParams) (model.Event, error)
 	deleteFn  func(ctx context.Context, id uuid.UUID) error
@@ -24,8 +24,8 @@ func (m *mockEventRepo) GetByID(ctx context.Context, id uuid.UUID) (model.Event,
 	return m.getByIDFn(ctx, id)
 }
 
-func (m *mockEventRepo) List(ctx context.Context, limit, offset int) ([]model.Event, error) {
-	return m.listFn(ctx, limit, offset)
+func (m *mockEventRepo) List(ctx context.Context, filter repository.EventFilter, limit, offset int) ([]model.Event, int, error) {
+	return m.listFn(ctx, filter, limit, offset)
 }
 
 func (m *mockEventRepo) Create(ctx context.Context, params repository.CreateEventParams) (model.Event, error) {

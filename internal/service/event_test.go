@@ -142,18 +142,45 @@ func TestEventService_Update(t *testing.T) {
 }
 
 func TestEventService_List(t *testing.T) {
+	published := model.EventStatusPublished
+	catID := uuid.New()
+
 	tests := []struct {
 		name       string
+		filter     EventListFilter
 		limit      int
 		offset     int
 		wantLimit  int
 		wantOffset int
+		wantTotal  int
+		wantErr    error
 	}{
-		{name: "defaults for zero", limit: 0, offset: 0, wantLimit: 20, wantOffset: 0},
-		{name: "negative limit", limit: -5, offset: 0, wantLimit: 20, wantOffset: 0},
-		{name: "exceeds max", limit: 200, offset: 0, wantLimit: 100, wantOffset: 0},
-		{name: "negative offset", limit: 10, offset: -3, wantLimit: 10, wantOffset: 0},
-		{name: "normal values", limit: 50, offset: 10, wantLimit: 50, wantOffset: 10},
+		{name: "defaults for zero", limit: 0, offset: 0, wantLimit: 20, wantOffset: 0, wantTotal: 5},
+		{name: "negative limit", limit: -5, offset: 0, wantLimit: 20, wantOffset: 0, wantTotal: 5},
+		{name: "exceeds max", limit: 200, offset: 0, wantLimit: 100, wantOffset: 0, wantTotal: 5},
+		{name: "negative offset", limit: 10, offset: -3, wantLimit: 10, wantOffset: 0, wantTotal: 5},
+		{name: "normal values", limit: 50, offset: 10, wantLimit: 50, wantOffset: 10, wantTotal: 5},
+		{
+			name:      "filter by status",
+			filter:    EventListFilter{Status: &published},
+			limit:     10,
+			offset:    0,
+			wantLimit: 10, wantOffset: 0, wantTotal: 5,
+		},
+		{
+			name:      "filter by category_id",
+			filter:    EventListFilter{CategoryID: &catID},
+			limit:     10,
+			offset:    0,
+			wantLimit: 10, wantOffset: 0, wantTotal: 5,
+		},
+		{
+			name:    "invalid status filter",
+			filter:  EventListFilter{Status: ptr(model.EventStatus("bogus"))},
+			limit:   10,
+			offset:  0,
+			wantErr: ErrValidation,
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,15 +188,22 @@ func TestEventService_List(t *testing.T) {
 			var gotLimit, gotOffset int
 
 			repo := &mockEventRepo{
-				listFn: func(_ context.Context, limit, offset int) ([]model.Event, error) {
+				listFn: func(_ context.Context, _ repository.EventFilter, limit, offset int) ([]model.Event, int, error) {
 					gotLimit = limit
 					gotOffset = offset
-					return []model.Event{}, nil
+					return []model.Event{}, 5, nil
 				},
 			}
 			svc := NewEventService(repo)
 
-			_, err := svc.List(context.Background(), tt.limit, tt.offset)
+			events, total, err := svc.List(context.Background(), tt.filter, tt.limit, tt.offset)
+
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -179,8 +213,17 @@ func TestEventService_List(t *testing.T) {
 			if gotOffset != tt.wantOffset {
 				t.Errorf("got offset %d, want %d", gotOffset, tt.wantOffset)
 			}
+			if total != tt.wantTotal {
+				t.Errorf("got total %d, want %d", total, tt.wantTotal)
+			}
+			_ = events
 		})
 	}
+}
+
+// ptr returns a pointer to the given value.
+func ptr[T any](v T) *T {
+	return &v
 }
 
 func TestEventService_GetByID(t *testing.T) {
