@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/thetoppal/encore/internal/config"
 	"github.com/thetoppal/encore/internal/db"
@@ -41,6 +42,12 @@ func main() {
 
 	// Setup router.
 	router := chi.NewRouter()
+
+	// Base middleware stack.
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
 
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Ok")) //nolint:errcheck // nothing to do if response write fails
